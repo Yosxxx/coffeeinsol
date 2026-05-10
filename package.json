@@ -1,7 +1,16 @@
 {
   "name": "solana-coffee-tip",
   "version": "1.0.0",
+  "description": "A plug-and-play React tip button for Solana — accept SOL or USDT directly on your site.",
   "type": "module",
+  "license": "MIT",
+  "author": "whaleees",
+  "keywords": ["solana", "tip", "donate", "react", "web3", "sol", "usdt", "crypto"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whaleees/solana-coffee-tip"
+  },
+  "homepage": "https://github.com/whaleees/solana-coffee-tip#readme",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,9 +19,23 @@
     "build": "tsup src/index.ts --format cjs,esm --dts --minify --clean",
     "dev": "tsup src/index.ts --format cjs,esm --watch --dts"
   },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@solana/spl-token": "^0.4.14",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.14.0",
+    "tailwind-merge": "^3.5.0"
+  },
   "peerDependencies": {
     "react": ">=18",
-    "@solana/web3.js": "*",
-    "@solana/wallet-adapter-react": "*"
+    "@solana/web3.js": "^1.98.4",
+    "@solana/wallet-adapter-react": "^0.15.39"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "tailwindcss": "^4.3.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3"
   }
 }

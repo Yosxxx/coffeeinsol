@@ -1,69 +1,109 @@
-import { 
-  Transaction, 
-  SystemProgram, 
-  PublicKey, 
-  LAMPORTS_PER_SOL, 
-  Connection 
+import {
+  Transaction,
+  SystemProgram,
+  PublicKey,
+  LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import { 
-  createTransferCheckedInstruction, 
-  getAssociatedTokenAddress, 
+import {
+  createTransferCheckedInstruction,
+  getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
-  getMint 
+  getMint,
 } from '@solana/spl-token';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { type Cluster, DEFAULT_USDT_MINT, PROTOCOL_FEE_RECIPIENT } from '../config.js';
 
-const USDT_MINT = new PublicKey("Es9vMFrzaDCSTMdWx8S59m1pB4fSw4nK6jN29z9Z6Qcq");
-const FEE_RECIPIENT = new PublicKey("YOUR_FEE_WALLET_ADDRESS");
+export type TipAsset = 'SOL' | 'USDT';
+export type DonationStatus = 'idle' | 'loading' | 'success' | 'error';
+export interface DonationResult { signature: string }
 
-export const useCoffee = () => {
+export interface UseCoffeeConfig {
+  cluster: Cluster;
+  /**
+   * SPL token mint to use as USDT. Required on devnet/localnet since there
+   * is no canonical USDT mint on those clusters. Ignored on mainnet-beta
+   * unless you explicitly want to override.
+   */
+  usdtMint?: string;
+}
+
+const FEE_RECIPIENT = new PublicKey(PROTOCOL_FEE_RECIPIENT);
+
+const buildSolTx = (sender: PublicKey, owner: PublicKey, lamports: bigint): Transaction => {
+  const fee = lamports / 100n;
+  const ownerAmount = lamports - fee;
+  return new Transaction().add(
+    SystemProgram.transfer({ fromPubkey: sender, toPubkey: owner, lamports: Number(ownerAmount) }),
+    SystemProgram.transfer({ fromPubkey: sender, toPubkey: FEE_RECIPIENT, lamports: Number(fee) }),
+  );
+};
+
+const buildUsdtTx = async (
+  connection: ReturnType<typeof useConnection>['connection'],
+  sender: PublicKey,
+  owner: PublicKey,
+  amount: number,
+  usdtMintAddress: string,
+): Promise<Transaction> => {
+  const USDT_MINT = new PublicKey(usdtMintAddress);
+  const mintInfo = await getMint(connection, USDT_MINT);
+  const { decimals } = mintInfo;
+
+  const total = BigInt(Math.floor(amount * 10 ** decimals));
+  const fee = total / 100n;
+  const ownerAmount = total - fee;
+
+  const senderAta = await getAssociatedTokenAddress(USDT_MINT, sender);
+  const ownerAta = await getAssociatedTokenAddress(USDT_MINT, owner);
+  const feeAta = await getAssociatedTokenAddress(USDT_MINT, FEE_RECIPIENT);
+
+  const tx = new Transaction();
+  const [ownerAtaInfo, feeAtaInfo] = await Promise.all([
+    connection.getAccountInfo(ownerAta),
+    connection.getAccountInfo(feeAta),
+  ]);
+
+  if (!ownerAtaInfo)
+    tx.add(createAssociatedTokenAccountInstruction(sender, ownerAta, owner, USDT_MINT));
+  if (!feeAtaInfo)
+    tx.add(createAssociatedTokenAccountInstruction(sender, feeAta, FEE_RECIPIENT, USDT_MINT));
+
+  tx.add(
+    createTransferCheckedInstruction(senderAta, USDT_MINT, ownerAta, sender, ownerAmount, decimals),
+    createTransferCheckedInstruction(senderAta, USDT_MINT, feeAta, sender, fee, decimals),
+  );
+  return tx;
+};
+
+export const useCoffee = (config: UseCoffeeConfig) => {
   const { connection } = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
+  const { publicKey, sendTransaction, connected } = useWallet();
 
-  const transferSol = async (owner: PublicKey, amount: number) => {
-    const total = BigInt(Math.floor(amount * LAMPORTS_PER_SOL));
-    const fee = total / 100n;
-    const remains = total - fee;
+  // Resolve which mint to use: explicit override wins, then cluster default
+  const resolvedUsdtMint = config.usdtMint ?? DEFAULT_USDT_MINT[config.cluster];
+  const usdtAvailable = !!resolvedUsdtMint;
 
-    return new Transaction().add(
-      SystemProgram.transfer({ fromPubkey: publicKey!, toPubkey: owner, lamports: Number(remains) }),
-      SystemProgram.transfer({ fromPubkey: publicKey!, toPubkey: FEE_RECIPIENT, lamports: Number(fee) })
-    );
-  };
+  const sendDonation = async (
+    ownerAddress: string,
+    amount: number,
+    asset: TipAsset,
+  ): Promise<DonationResult> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+    if (amount <= 0) throw new Error('Amount must be greater than 0');
+    if (asset === 'USDT' && !resolvedUsdtMint)
+      throw new Error(`No USDT mint configured for cluster "${config.cluster}". Pass a usdtMint prop.`);
 
-  const transferUsdt = async (owner: PublicKey, amount: number) => {
-    const mintInfo = await getMint(connection, USDT_MINT);
-    const decimals = mintInfo.decimals;
-    const total = BigInt(Math.floor(amount * Math.pow(10, decimals)));
-    const fee = total / 100n;
-    const remains = total - fee;
-
-    const ownerAta = await getAssociatedTokenAddress(USDT_MINT, owner);
-    const feeAta = await getAssociatedTokenAddress(USDT_MINT, FEE_RECIPIENT);
-    const senderAta = await getAssociatedTokenAddress(USDT_MINT, publicKey!);
-
-    const tx = new Transaction();
-    const info = await connection.getAccountInfo(ownerAta);
-    if (!info) {
-      tx.add(createAssociatedTokenAccountInstruction(publicKey!, ownerAta, owner, USDT_MINT));
-    }
-
-    tx.add(
-      createTransferCheckedInstruction(senderAta, USDT_MINT, ownerAta, publicKey!, remains, decimals),
-      createTransferCheckedInstruction(senderAta, USDT_MINT, feeAta, publicKey!, fee, decimals)
-    );
-    return tx;
-  };
-
-  const sendDonation = async (ownerAddress: string, amount: number, type: 'SOL' | 'USDT') => {
-    if (!publicKey) throw new Error("Wallet not connected");
     const owner = new PublicKey(ownerAddress);
-    const tx = type === 'SOL' ? await transferSol(owner, amount) : await transferUsdt(owner, amount);
-    
-    const sig = await sendTransaction(tx, connection);
-    await connection.confirmTransaction(sig, 'confirmed');
-    return sig;
+    const tx =
+      asset === 'SOL'
+        ? buildSolTx(publicKey, owner, BigInt(Math.floor(amount * LAMPORTS_PER_SOL)))
+        : await buildUsdtTx(connection, publicKey, owner, amount, resolvedUsdtMint!);
+
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const signature = await sendTransaction(tx, connection);
+    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    return { signature };
   };
 
-  return { sendDonation };
+  return { sendDonation, connected, publicKey, usdtAvailable, cluster: config.cluster };
 };
