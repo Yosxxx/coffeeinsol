@@ -1,5 +1,8 @@
 export type Cluster = 'mainnet-beta' | 'devnet' | 'localnet';
 
+// config.ts extensions
+export const MOCK_MINT_AMOUNT = 100; // Amount of mock USDT to give user for simulation
+
 // Canonical USDT SPL mint on Solana mainnet (Tether)
 export const MAINNET_USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 
